@@ -35,6 +35,8 @@ Process files in folder and create a book with serif font:
 Process files in .list, merge them:
 
 	pymd.py nice.list -m -o /output -header im_a_header.md
+	
+More examples and explanation (with images, yay!) in this [blog post](http://www.intentodeblog.com.ar/posts/pymd/en.html)
 
 Features
 -----------
