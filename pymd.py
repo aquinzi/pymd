@@ -1,5 +1,5 @@
-
 # -*- coding: utf-8 -*-
+from __future__ import unicode_literals
 
 import sys
 
@@ -15,13 +15,33 @@ import argparse
 import errno
 
 # ---------------------
-# Config & info
+# info
 # ---------------------
 
-my_version = "0.5.2"
+my_version = "0.5.3"
+my_usage = """ %(prog)s SOURCE [--output FOLDER [--flat]] [--header FILE ] [--exts LIST ]
+                   [ --css FILE | --serif ] 
+                   [ book [--index FILE --nav] | merge [--toc(0, 1, 2, 3, 4, 5)] ] 
+  
+ 	Note: book is the same as --book, as well as merge is the same as --merge. """
+my_description = """
+ Human readable example: 
+    %(prog)s /path/to/nice_folder book --nav --serif -o /path/to/nice_output_folder
+
+ Description: 
+ 	Parse markdown to html with python markdown + all extensions. Extensions being: extra (abbreviations, attributes lists, definition lists, fenced code blocks, footnotes, tables, smart strong), admonition, codehilite, headerid, meta, nl2br, sane_lists, toc, wikilinks
+
+"""
+my_epilog = "  Using %(prog)s version " + my_version
+
+# ---------------------
+# Config
+# ---------------------
 
 headerFilename = "_header"
+indexFilename = "_index"
 
+# must be list
 selected_ext = [
 		'extra', 
 		'admonition', 'codehilite','headerid', 'meta', 'nl2br', 'sane_lists', 'toc', 'wikilinks'
@@ -49,49 +69,108 @@ def index_containing_substring(the_list, substring):
               return i + 1 # if it's in the first, add 1 so doesn't go to false
     return False
 
-def args ():
-	parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, description="""
-  Parse markdown to html with python markdown + extensions. Version """ + my_version + """
+class OptionsBelong(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if option_string == "--toc" and namespace.merge is False:
+        	parser.error('--toc belongs to --merge')
+        
+        if option_string in ["--index", "--nav"] and namespace.book is False:
+        	parser.error(option_string + ' belongs to --book')
+
+        if option_string == "--nav" or option_string == "-n":
+        	values = True
+        setattr(namespace, self.dest, values)
+
+class InputExist(argparse.Action):
+	def __call__(self, parser, namespace, values, option_string=None):
+		if not os.path.exists(values):
+			parser.error('Source file or folder doesn\'t exist')
+		setattr(namespace, self.dest, values)
+
+def args():
+	# to allow --merge to be merge and still being optional
+	subcat_args=('merge','book')
+	arguments=['--'+arg if arg in subcat_args else arg for arg in sys.argv[1:]]
+
+	# definitions:
+	parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, add_help=False, usage=my_usage, description=my_description, epilog=my_epilog)
+
+	group_required = parser.add_argument_group(' Required')
+
+	group_required.add_argument("source"
+								, help="File, folder or a .list which holds the path+files (in order) to parse (mainly used with merge or book)"
+								, action=InputExist)
+
+	group_options = parser.add_argument_group(' Options')
 	
-  Extensions: extra (abbreviations, attributes lists, definition lists, fenced code blocks, footnotes, tables, smart strong), admonition, codehilite, headerid, meta, nl2br, sane_lists, toc, wikilinks
-	""")
+	group_options.add_argument("--output", "-o" 
+								, help="Output folder to save processed files"
+								, metavar='FOLDER')
+	group_options.add_argument("--flat"
+								, help="Saves all the files in a single directory depth (not using source dir tree)"
+								, action="store_true")
+	group_options.add_argument("--header"
+								, help="Header file, mainly for merged files. Might contain main title, date and toc (as [TOC_HERE]) placement."
+								, metavar='FILE')
+	group_options.add_argument("--extensions"
+								, help="List of other installed extensions"
+								, nargs='*', metavar='ext')
 
-	group_important = parser.add_argument_group('Important')
-	group_important.add_argument("input", help="file, folder or a .list which holds the path+files (in order) to parse (mainly used in conjuntion with merge or book)")
+	exclusive_css = group_options.add_mutually_exclusive_group()
+	exclusive_css.add_argument("--css"
+								, help="Custom css with path (as included in href). Default: embeded"
+								, metavar='FILE')
+	exclusive_css.add_argument("--serif"
+								, help="In embeded css, choose between sans (false) or serif (true). Default: sans"
+								, action='store_true')	
 
-	group_optional = parser.add_argument_group('Other Options')
-	group_optional.add_argument("-output", "-o", help="Output folder to save processed files")
-	group_optional.add_argument("-header", help="Header file, mainly for merged files. Might contain main title, date and toc (as [TOC_HERE]) placement.", default="")
-	group_optional.add_argument("-css", help="custom css with path (as included in href). Default: embeded", default="")
-	group_optional.add_argument("-serif", help="In embeded css, choose between sans (false) or serif (true). Default: sans", action='store_true')
-	group_optional.add_argument("-extensions", "-ext", help="Other installed extensions",nargs='*')
-	group_optional.add_argument("-toc", help="Toc max depth (for [TOC_HERE]). Default: 0 (all)", choices=[0, 1, 2, 3, 4, 5], default=0, type=int)
+	group_special = parser.add_argument_group(' Specific')
+
+	exclusive_style = group_special.add_mutually_exclusive_group()
+	exclusive_style.add_argument("--merge"
+								, help="Merge files into one."
+								, action="store_true")
+	group_special.add_argument  ("--toc"
+								, help="Toc max depth (for [TOC_HERE]). Default: %(default)s (all)"
+								, choices=[0, 1, 2, 3, 4, 5] , default=0 , type=int, action=OptionsBelong)
+	exclusive_style.add_argument("--book"
+								, help="Create a notebook with navigation (next, prev) between files and an index"
+								, action="store_true")
+	group_special.add_argument  ("--index"
+								, help="Custom index for book"
+								, action=OptionsBelong , metavar='FILE')
+	group_special.add_argument  ("--nav", "-n"
+								, help='Use file titles as the navigation links instead of "prev/next"'
+								, default=False , nargs=0 , action=OptionsBelong )
+
+	group_other = parser.add_argument_group(' Last but not least')
+	group_other.add_argument("--help", "-h", help="show this help message and exit", action="help") 
 
 
-	group_exclusive = group_optional.add_mutually_exclusive_group()
-	group_exclusive.add_argument("-merge", "-m", help="Merge files into one.", action='store_true')
-	group_exclusive.add_argument("-book", "-b", help="Create a notebook with navigation (next, prev) between files and an index", action='store_true')
-	group_exclusive.add_argument("-BOOK", "-B", help="Create a notebook with navigation (file titles) between files and an index", action='store_true')
-
-	return vars(parser.parse_args()) 
+	return parser.parse_args(arguments)
 
 # ---------------------
 # Methods: OS
 # ---------------------
 
 def getPath(file):
+
 	return os.path.dirname(file)
 
 def getLastDir(path):
+
 	return os.path.split(path)[1]
 
 def findPath(file):
+
 	return os.path.abspath(file)
 
 def getFilename(file):
+
 	return os.path.basename(file)
 
 def delExtension(file):
+
 	path, ext = os.path.splitext(file)
 	return path
 
@@ -112,6 +191,9 @@ def getFiles (elements):
 	return theFiles	
 
 def saveFile(name, content):
+
+	# create output tree folders if doesnt exist
+	mkdir_p(getPath(name))
 
 	if pyVer == 3:
 		cmd = open(name, 'w',encoding="utf-8-sig")
@@ -159,21 +241,62 @@ def readFile(file):
 
 	return textfile
 
-# make dirs according to tree in path
 def mkdir_p(path):
-    try:
-        os.makedirs(path)
-    except OSError as exc: 
-        if exc.errno == errno.EEXIST and os.path.isdir(path):
-            pass
-        else: raise
+	""" make dirs according to tree in path """
+	try:
+		os.makedirs(path)
+	except OSError as exc:
+		if exc.errno != errno.EEXIST:
+			raise 
+
+def getOutputPath(filepath):
+	if folderOutput:
+		if not settings.flat:
+			if filepath == sourcePath:
+				newPath = os.path.join(folderOutput,delExtension(getFilename(filepath))+".html")
+			else:
+				newPath = os.path.join(folderOutput,delExtension(filepath)[len(sourcePath)+1:]+".html") # remove first \, otherwise join doesnt work
+
+		else:
+			newPath = os.path.join(folderOutput,delExtension(getFilename(filepath))+".html")
+
+		return newPath
+	
+	return delExtension(filepath) + ".html"
+
+def pagesSpecial():
+	global allFiles, headerFile, indexFile
+
+	# existance of header or index in files
+	headerList = index_containing_substring(allFiles, headerFilename+".")
+	indexList  = index_containing_substring(allFiles, indexFilename+".")
+
+	if headerFile or headerList:
+		if headerList and not headerFile:
+			headerFile = allFiles[headerList -1]
+
+		headerFile = findPath(headerFile)
+
+		if headerFile in allFiles:
+			allFiles.remove(headerFile)
+
+	if indexFile or indexList:
+		if indexList and not indexFile:
+			indexList = allFiles[indexList -1]
+
+		indexFile = findPath(indexFile)
+
+		if indexFile in allFiles:
+			allFiles.remove(indexFile)
+
+def absolutePath(file_path):
+	return delExtension(file_path)[len(sourcePath)+2:]+".html" #remove a letter and \
 
 # ---------------------
 # Methods: HTML
 # ---------------------
 
 def cssDefault():
-	global isSerif
 
 	returnMe = """
 	* 			{ margin: 0; padding: 0; }
@@ -183,7 +306,7 @@ def cssDefault():
 		padding: 10px 25px; max-width: 700px; margin: 5px auto; 
 	"""
 
-	if isSerif:
+	if settings.serif:
 		returnMe += "	font: normal 14px 'Droid Serif', Georgia, serif;"
 	else:
 		returnMe += "	font: 14px helvetica,arial,freesans,clean,sans-serif;"
@@ -422,79 +545,92 @@ def cssDefault():
 	
 	return returnMe
 
-# complete the missing html, including css
 def htmlMissing (title):
+	"""Complete the missing HTML, including CSS """
 
-	part1 = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>'+title+'</title>\n'
+	begining = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>'+title+'</title>\n'
 
-	if not css_path:
-		part1 += "<style>" + cssDefault() + "</style>"
+	if not settings.css:
+		begining += "<style>" + cssDefault() + "</style>"
 	else: 
-		part1 += '<link rel="stylesheet" href="'+css_path+' type="text/css">'
+		begining += '<link rel="stylesheet" href="'+settings.css+' type="text/css">'
 
-	part1 += '\n</head>\n<body>\n'
+	begining += '\n</head>\n<body>\n'
 
-	part2='</body>\n</html>'
+	ending='</body>\n</html>'
 	
-	return part1, part2
+	return begining, ending
 
-# reformat the text to valid html page
 def htmlComplete(title, meta, text):
+	""" reformat the text to valid html page """
+
 	document = ""
 
 	tagsBeg, tagsEnd = htmlMissing(title)
-
 	document = tagsBeg + meta + text + tagsEnd
 
 	return document
 
-def htmlBookNavigation(prev, ptitle, next, ntitle):
+def bookNavigation(prev, ptitle, next, ntitle):
 	navPre = ""
 	navNext = ""
 
 	if prev:
-		navPre = delExtension(prev)
-		if folderOutput:
-			navPre = os.path.join(folderOutput,delExtension(getFilename(prev)))
-		if bookNavTitles:
-			navPre = '<a href="'+navPre+'.html">&lt; '+ptitle+'</a>'
+		prev = absolutePath(prev)
+		if settings.nav:
+			navPre = '<a href="'+prev+'">&lt; '+ptitle+'</a>'
 		else:
-			navPre = '<a href="'+navPre+'.html">&lt; prev</a>'
+			navPre = '<a href="'+prev+'">&lt; prev</a>'
 
 	if next:
-		navNext = delExtension(next) 
-		if folderOutput:
-			navNext = os.path.join(folderOutput,delExtension(getFilename(next)))
-		if bookNavTitles:
-			navNext = '<a href="'+navNext+'.html">'+ntitle+' &gt;</a>'
+		next = absolutePath(next)
+		if settings.nav:
+			navNext = '<a href="'+next+'">'+ntitle+' &gt;</a>'
 		else:
-			navNext = '<a href="'+navNext+'.html">next &gt;</a>'
+			navNext = '<a href="'+next+'">next &gt;</a>'
 
 	return '<div class="nav">'+navPre+' <a href="index.html">index</a> '+navNext+'</div>'
+
+def makeTextFinal(data_dict, navigation=""):
+
+	title = ""
+	meta  = ""
+	body  = ""
+
+	if headerHTML or headerTitle:
+		title = headerTitle + " | " + data_dict['title']
+		meta = navigation + headerHTML + "\n\r<article>" + data_dict['meta']
+		body = data_dict['html'] + "</article>\n\r"+navigation
+	else:
+		title = data_dict['title']
+		meta = "\n\r<header>" + navigation + data_dict['meta'] + "</header>\n\r"
+		body = "\n\r<article>" + data_dict['html'] + "</article>\n\r"+navigation
+
+	return htmlComplete(title, meta, body)
 
 # ---------------------
 # Methods: Parsing
 # ---------------------
 
-def findFirstHeader(text):
+def findH1(text):
 
-	if text.find("<h1>"):
-		title = text[text.find("<h1>")+4:text.find("</h1>")]
+	if text.find("<h1 ")>-1: # because of extensions
+		title = text[text.find("<h1 ")+4:text.find("</h1>")]
 		title = title.split(">")[1] # dirty fix
 
-	return title
+		return title
+
+	return None
 
 def futureTitle(file):
-	if file:
-		md = markdown.Markdown(extensions=selected_ext, output_format="html5")
-		html = md.convert(readFile(file))
+	md = markdown.Markdown(extensions=selected_ext, output_format="html5")
+	html = md.convert(readFile(file))
 
-		return findFirstHeader(html)
+	return findH1(html)
 
-# take meta and convert it to html
 def metaParse (dict):
+	"""Take meta dict and convert it to HTML """
 
-	# holders
 	MetaDataHTML = "" 
 	title        = ""
 	
@@ -506,7 +642,7 @@ def metaParse (dict):
 
 			MetaDataHTML = MetaDataHTML + '<' + a[1] + ' class="'+a[0]+'">' + dict[a[0]][0] + '</' + a[1] + '>\n'
 			
-			del dict[a[0]] # eliminamos del dict
+			del dict[a[0]]
 	
 	# ahora vemos si quedaron otras cosas, si es asi, pasamos a def list 
 	if dict:
@@ -518,51 +654,43 @@ def metaParse (dict):
 	
 	return title, MetaDataHTML
 
-def processHeaderFile():
-	global headerFile
-	global files
+def fileData(filepath):
+	md    = markdown.Markdown(extensions=selected_ext, output_format="html5")
+	meta  = ""
+	title = ""
 
-	md = markdown.Markdown(extensions=selected_ext, output_format="html5")
+	html = md.convert(readFile(filepath))
 
-	# header processing (first part)
-	headerFilePath     = ""
-	headerTextHtml     = ""
-	headerTitle        = ""
-	headerMetaHtml     = ""
+	# save toc not especified in document
+	try:
+	    toc = md.toc
+	except AttributeError:
+	    toc   = ""
 
-	# check for _header in file list
-	index = index_containing_substring(files,headerFilename+".")
+	if md.Meta:
+		title, meta = metaParse(md.Meta)
 
-	if headerFile or index:
+	if not title:
+		h1 = findH1(html)
 
-		if index and not headerFile:
-			index = index - 1 # back to normal list index
-			headerFile = files[index]
+		if h1 is not None:
+			title = h1
+		else:
+			title = filepath
+		
+	data = {
+		'html' : html,
+		'path_output' : getOutputPath(filepath),
+		'toc' : toc,
+		'meta' : meta,
+		'title' : title
+	}
 
-		if headerFile in files:
-			files.remove(headerFile)
+	return data 
 
-		headerFilePath = findPath(headerFile)
+def tocMerge(tocs):
+	"""Merge multiple TOCs (HTML) into one """
 
-		if os.path.exists(headerFilePath):
-			# header parsing		
-			headerTextHtml = md.convert(readFile(headerFilePath))
-
-			# default header title
-			headerTitle = headerFile
-
-			if md.Meta:
-				headerTitle, headerMetaHtml = metaParse(md.Meta)
-
-	if headerMetaHtml:
-		headerMetaHtml = "\n\r<header>" + headerMetaHtml + "</header>\n\r"
-
-	headerTextHtml = '\n\r<section id="head">' + headerMetaHtml + headerTextHtml + "</section>\n\r"
-
-	return headerTitle, headerTextHtml
-
-# merge multiple TOCs into one
-def tocProcess(tocs):
 	tocFinal = tocs.replace('\n</ul>\n</div>', "")
 
 	if tocDepth == 0:
@@ -605,154 +733,179 @@ def tocProcess(tocs):
 
 	return '<div class="toc"><ul>'+tocFinal+'</ul></div>' 
 
-def parseProject(elements):
+def wikiLinks(text):
+	"""
+	Process "wiki" links: [](file.md) to [file title](newpath.html).
+	It must be a markdown file, opened before
+	"""
 
-	md = markdown.Markdown(extensions=selected_ext, output_format="html5")
-
-	# header processing (first part)
-	headerTitle, headerHtml = processHeaderFile()
-
-	# process files
-	projectWhole       = ""
-	projectTocs        = ""
-	fileOutputName     = ""
-	bookIndex 			= "<ul>"
-	prevTitle		   = ""
-	nextTitle		= ""
-
-	filesTotal = len(files)
+	textNew = list()
 	
-	for index, file in enumerate(files):	
-		fileOutputTextHtml = ""
-		fileOutputTitle    = ""
-		fileOutputMetaHtml = ""
+	for index, line in enumerate(text):
+		if line.find("[](") > -1: # some bug going on...
+			linkedFileName = line[line.find("[](")+3:line.find(")")]
+
+			if os.path.exists(linkedFileName):
+				title = futureTitle(linkedFileName)
+				if title: 
+					line = line.replace("[](","["+title+"](")
+			else:
+				line = line.replace("[](","["+linkedFileName+"](")
+
+			outputPath = getFilename(getOutputPath(linkedFileName))
+
+			line = line.replace(linkedFileName,outputPath)
+		textNew.append(line)
+
+	return textNew
+
+def getHeader():
+	headerText  = ""
+	headerTitle = ""
+
+	if headerFile and os.path.exists(headerFile):
+		data_header = fileData(headerFile)
+		headerTitle = data_header['title']
+		
+		if data_header['meta']:
+			data_header['meta'] = "\n\r<header>" + data_header['meta'] + "</header>\n\r"
+
+		headerText = '\n\r<section id="head">' + data_header['meta'] + data_header['html'] + "</section>\n\r"
+
+	return headerTitle, headerText
+
+def getIndex():
+	if indexFile and os.path.exists(indexFile):
+		parsedIndex = readFile(indexFile).split("\n")
+
+		parsedIndex = wikiLinks(parsedIndex)
+
+		# back to text
+		parsedIndex = '\n'.join(n for n in parsedIndex)
+
+		md = markdown.Markdown(extensions=selected_ext, output_format="html5")
+		parsedIndex = md.convert(parsedIndex)
+
+		outputPath = getOutputPath("index.html")
+
+		output = htmlComplete("Index", "", parsedIndex)
+
+		saveFile(outputPath, output)
+
+def makeFiles():
+	projectWhole = ""
+	projectTocs = ""
+	
+	for file in allFiles:
+		data_current = fileData(file)
+
+		if not settings.merge:
+			outputText = makeTextFinal(data_current)
+
+			saveFile(data_current['path_output'], outputText)
+		else:
+			projectTocs += data_current['toc']
+			projectWhole += '\r\n <article>' + data_current['meta'] + data_current['html'] + "</article>\n\r"
+
+	if settings.merge:
+		outputName = getLastDir(getPath(data_current['path_output'])) + ".html"
+
+		projectTocs = tocMerge(projectTocs)
+		headerReplaced = headerHTML.replace('[TOC_HERE]', projectTocs)
+
+		outputText = htmlComplete(headerTitle, headerReplaced, projectWhole)
 
 		if folderOutput:
-			fileOutputName = os.path.join(folderOutput,delExtension(getFilename(file))+".html")
+			saveFile(folderOutput + '\\'+ outputName, outputText)
 		else:
-			fileOutputName = delExtension(file) + ".html"
+			saveFile(os.getcwd() + '\\'+ outputName, outputText)
 
-			
-		fileOutputTextHtml = md.convert(readFile(file))
-
-		# save toc not especified in document
-		try:
-		    projectTocs += md.toc
-		except AttributeError:
-		    pass
-
-		# default title	
-		fileOutputTitle = file
-		
-
-		if md.Meta:
-			fileOutputTitle, fileOutputMetaHtml = metaParse(md.Meta)
-
-			if fileOutputTitle:
-				filetitle = fileOutputTitle
-		else:
-			filetitle = findFirstHeader(fileOutputTextHtml)
-			fileOutputTitle = filetitle
-
-		bookIndex += '<li><a href="'+fileOutputName+'">'+filetitle+'</a></li>'
-
-		if not mergeFiles:
-			navigation = ""
-			if bookit:
-				if index > 0:
-					prevFile = files[index-1]
-				else:
-					prevFile = ""
-
-				if (index + 1)== filesTotal:
-					nextFile = ""
-				else:
-					nextFile = files[index+1]
-
-				if bookNavTitles:
-					nextTitle = futureTitle(nextFile)
-
-				navigation = htmlBookNavigation(prevFile, prevTitle, nextFile, nextTitle)
-
-			if headerTitle:
-				fileOutputTextHtml = htmlComplete(headerTitle + " | " + fileOutputTitle, navigation + headerHtml + "\n\r<article>" + fileOutputMetaHtml , fileOutputTextHtml + "</article>\n\r"+navigation)
-			else:	
-				# completamos con el missing html 
-				fileOutputTextHtml = htmlComplete(fileOutputTitle, "\n\r<header>" + navigation + fileOutputMetaHtml + "</header>\n\r", "\n\r<article>" + fileOutputTextHtml + "</article>\n\r"+navigation)
-
-			saveFile(fileOutputName, fileOutputTextHtml)
-
-		else:
-			projectWhole += '\r\n <article>' + fileOutputMetaHtml + fileOutputTextHtml + "</article>\n\r"
-
-		prevTitle = fileOutputTitle
-
-		md.reset()
+def makeBook():
 	
-	if bookit:
+	bookIndex = "<ul>"
+	filesTotal 	 = len(allFiles) - 1 # we process first one here
+	
+	data_first = fileData(allFiles[0])
+	absPath = absolutePath(data_first['path_output'])
+	bookIndex += '<li><a href="'+absPath+'">'+data_first['title']+'</a></li>'
+
+	data_next = fileData(allFiles[1])
+	navigation = bookNavigation("", "", data_next['path_output'], data_next['title'])
+
+	outputText = makeTextFinal(data_first, navigation)
+
+	saveFile(data_first['path_output'], outputText)
+
+	data_prev    = data_first
+	data_current = data_next
+	data_next = {'path_output':"", 'title':""}
+	
+	for index, file in enumerate(allFiles[1:]):
+		absPath = absolutePath(data_current['path_output'])
+		bookIndex += '<li><a href="'+absPath+'">'+data_current['title']+'</a></li>'
+
+		if index+1 < filesTotal:
+			data_next = fileData(allFiles[index+1])
+
+		navigation = bookNavigation(data_prev['path_output'], data_prev['title'], data_next['path_output'], data_next['title'])
+
+		outputText = makeTextFinal(data_current, navigation)
+
+		saveFile(data_current['path_output'], outputText)
+
+		data_prev = data_current
+		data_current = data_next
+		data_next = {'path_output':"", 'title':""}
+
+	if indexFile:
+		getIndex()
+	else:
 		bookTitle = ""
+
 		if headerTitle:
 			bookTitle = headerTitle
 		else:
 			bookTitle = folderOutput
-
+		
 		bookIndex = htmlComplete(bookTitle, "", bookIndex+"</ul>")
+
 		if folderOutput:
 			saveFile(folderOutput+'\\index.html', bookIndex)
 		else:
 			saveFile(os.getcwd()+'\\index.html', bookIndex)
-
-
-	# Process for merged files
-	if mergeFiles:
-
-		# Process toc:
-		projectTocs = tocProcess(projectTocs)
-		headerHtml = headerHtml.replace('[TOC_HERE]', projectTocs)
-
-		fileOutputTextHtml = htmlComplete(headerTitle, headerHtml, projectWhole)
-
-		fileOutputName = getLastDir(getPath(fileOutputName)) + ".html"
-
-		if folderOutput:
-			saveFile(folderOutput + '\\'+ fileOutputName, fileOutputTextHtml)
-		else:
-			saveFile(os.getcwd() + '\\'+ fileOutputName, fileOutputTextHtml)
-
-
+ 
 
 # -------------------
 # The program
 # -------------------
 
-args = args()
+settings = args()
 
-file         = args['input']
-css_path     = args['css']
-isSerif      = args['serif']
-mergeFiles   = args['merge']
-headerFile   = args['header']
-folderOutput = args['output']
-bookit 		 = args['book']
-bookNavTitles = args['BOOK']
-tocDepth 	 = args['toc']
+sourcePath   = settings.source
+headerFile   = settings.header
+folderOutput = settings.output
+tocDepth     = settings.toc
+indexFile    = settings.index
 
-if bookNavTitles:
-	bookit = True
+if settings.extensions:
+	selected_ext = selected_ext + settings.extensions
 
-if args['extensions']:
-	selected_ext = selected_ext + args['extensions']
-
-if not os.path.exists(file):
-	print "Source file or folder doesn't exist"
-	sys.exit()
-
-files = listFiles(file)
+allFiles = listFiles(sourcePath)
 
 if folderOutput:
 	mkdir_p(folderOutput)
 
+pagesSpecial()
+
 # do the magic
-parseProject(files)
+headerTitle, headerHTML = getHeader()
+
+if settings.book:
+	if len(allFiles) < 2:
+		print "sorry, you can't"
+		sys.exit()
+	makeBook()
+else:
+	makeFiles()
 
 print "\n    done"
