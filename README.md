@@ -44,9 +44,9 @@ Features
   * Batch process files (in folder or in a .list) with .md, .txt or .markdown extensions
   * Specify an output folder (with automatic creation)
   * Includes all the extensions installed by [Python Markdown](http://pythonhosted.org/Markdown/) and you can even specify your own!
-  * Merge files into one big HTML or create a little book with navigation links (NEW! create your own index file)
+  * Merge files into one big HTML or create a little book with navigation links. You can even create your own index file
   * CSSed: leave the no-so-ugly embeded CSS (you can even switch between sans and serif fonts) or link to one of your own if you prefer.
   * Headers for files! So you can share the same metadata (like your beautiful name and the creative title of your work) in all the files or when you merge the files and forgot to include the main title of your project.
-  * Wiki links: ```[](path) -> [title linked file](output_path)``` (NEW!)
+  * Wiki links: ```[](file|path) -> [title linked file](output_path)```
   * Made with love <3
 
