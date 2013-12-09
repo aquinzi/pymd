@@ -1,53 +1,90 @@
+"""
+Parses a file, files in folder, or list of files (.list, in order) to .html 
+in their folders using python markdown. The resulting folders can be saved 
+somewhere else specifying a folder with the -o flag. If the folder 
+(including tree) doesn't exist, it will be created. 
+ 
+You can merge the files with -merge or merge flag; it will take the header 
+parent folder as the filename or the running folder (script run) name. 
+ 
+The CSS, by default, is embeded and it uses sans font. You can switch to 
+serif using the --serif flag. You can specify an external one with --css
+ 
+It does includes all the extensions: extra (abbreviations, attributes lists, 
+definition lists, fenced code blocks, footnotes, tables, smart strong), 
+admonition, codehilite, headerid, meta, nl2br, sane_lists, toc, wikilinks; 
+but you can include your own with the -extension flag
+
+The header file is just a normal markdown file that is shared among the 
+"project" (each files will have the same header file) or is the header/title 
+in the merged file. Thus it can have, for example, metadata (Title, author, 
+date, comment, summary), the TOC of the merged files (using the 
+[TOC_HERE] placeholder), etc. The toc's depth can be filtered with the 
+-toc option (by default shows all)
+ 
+The header file can be specified in the command line with the -header flag, or 
+using a file with the name of "_header" in the folder, or specified 
+in the .list 
+
+Book support means that it will create navigational links in the files 
+(next, previous) and an index file linking to all the files. You can specify 
+a custom index with --index
+"""
+
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
 import sys
-
-try:
-	import markdown
-except Exception:
-	print ("Markdown library not installed")
-	sys.exit()
-
 import os
 import codecs
 import argparse
 import errno
+try:
+	import markdown
+except ImportError, e:
+	print ("Markdown library not installed")
+	sys.exit()
 
-# -----
+# --------------------------
 # info 
-# -----
+# --------------------------
 
-my_version = "0.5.4"
-my_usage = """ %(prog)s SOURCE [--output FOLDER [--flat]] [--header FILE ] [--exts LIST ]
+__version__ = "0.5.5"
+
+MY_USAGE = """%(prog)s SOURCE [--output FOLDER [--flat]] [--header FILE] [--exts LIST]
                    [ --css FILE | --serif ] 
                    [ book [--index FILE --nav] | merge [--toc(0, 1, 2, 3, 4, 5)] ] 
   
- 	Note: book is the same as --book, as well as merge is the same as --merge. """
-my_description = """
+ 	Note: book is the same as --book, as well as merge is the same as --merge. 
+
+	The .list contains the paths to the files in order to be parsed."""
+MY_DESCRIPTION = """
  Human readable example: 
     %(prog)s /path/to/nice_folder book --nav --serif -o /path/to/nice_output_folder
 
- Description: 
- 	Parse markdown to html with python markdown + all extensions. Extensions being: extra (abbreviations, attributes lists, definition lists, fenced code blocks, footnotes, tables, smart strong), admonition, codehilite, headerid, meta, nl2br, sane_lists, toc, wikilinks
+ Description:
+     Parse markdown to html with python markdown + all extensions. Extensions being: extra 
+     (abbreviations, attributes lists, definition lists, fenced code blocks, footnotes, 
+     tables, smart strong), admonition, codehilite, headerid, meta, nl2br, sane_lists, 
+     toc, wikilinks
 
 """
-my_epilog = "  Using %(prog)s version " + my_version
+MY_EPILOG = "  Using %(prog)s version " + __version__
 
 # ---------------------
 # Config
 # ---------------------
 
-headerFilename = "_header"
-indexFilename = "_index"
+HEADER_FILENAME = "_header"
+INDEX_FILENAME  = "_index"
 
 # must be list
-selected_ext = [
-		'extra', 
-		'admonition', 'codehilite','headerid', 'meta', 'nl2br', 'sane_lists', 'toc', 'wikilinks'
+SELECTED_EXTENSIONS = [
+		'extra', 'admonition', 'codehilite','headerid', 'meta', 'nl2br', 
+		'sane_lists', 'toc', 'wikilinks'
 	]
 
-needed_meta = (
+NEEDED_META = (
 		('title',   'h1'),
 		('author',  'h2'),
 		('date',    'h3'),
@@ -55,39 +92,57 @@ needed_meta = (
 		('comment', 'p')
 	)
 
-extensions_accepted = ("txt","md","markdown")
-pyVer = sys.version_info[0]
+EXTENSIONS_ACCEPTED = ("txt", "md", "markdown")
+PY_VER = sys.version_info[0]
+
+# default behaviour config
+CONFIG = {
+	  'source'     : False
+	, 'fileslist'  : False
+	, 'output'     : False 
+	, 'flat'       : False 
+	, 'header'     : False
+	, 'extensions' : False
+	, 'css'        : False
+	, 'serif'      : False
+	, 'merge'      : False
+	, 'toc'        : 0
+	, 'book'       : False
+	, 'index'      : False
+	, 'nav'        : False
+}
+
 
 class Parsing(object):
 	""" File properties (title, meta...) & processing methods """
 
 	def __init__(self, file_path, isindex=False):
+
 		if not isindex:
 			if file_path:
 				self._fileData(file_path)
 			else:
+				self.outputPath  = ""
 				self.title = ""
 				self.html  = ""
-				self.outputPath  = ""
-				self.meta       = ""
-				self.toc        = "" 
+				self.meta  = ""
+				self.toc   = "" 
 		else:
 			self.html  = ""
 			self.title = "Index"
 
 	def read(self, path):
-		if pyVer == 3:
-			cmd = open(path,"r", encoding='utf-8-sig')
-		else:
-			cmd = codecs.open(path,"r", encoding='utf-8-sig')
+		""" Read the file (returns string) and check for real meta."""
 
-		with cmd as input:
-			textfile = input.read()
-			input.seek(0)
+		cmd = cmd_open_write(path, 'r')
+
+		with cmd as input_file:
+			textfile = input_file.read()
+			input_file.seek(0)
 			
-			# Check if there's real meta or just title with :; if that's the case, add
-			# line breaks so it doesn't parse as meta
-			line1, line2 = next(input), next(input)
+			# Check if there's real meta or just title with :; 
+			# if not real, add line breaks so it doesn't parse as meta
+			_, line2 = next(input_file), next(input_file)
 
 			if line2.startswith('==') or line2.startswith('--'):
 				textfile = "\n\r " + textfile
@@ -95,9 +150,13 @@ class Parsing(object):
 		return textfile
 
 	def mdParse(self, text):
-		md = markdown.Markdown(extensions=selected_ext, output_format="html5")
+		""" Do parsing of file and get: title, meta & toc """
+
+		md    = markdown.Markdown(
+							extensions=SELECTED_EXTENSIONS, 
+							output_format="html5")
 		title = ""
-		meta = ""
+		meta  = ""
 
 		text_html = md.convert(text)
 		
@@ -118,13 +177,13 @@ class Parsing(object):
 			else:
 				title = self.outputPath
 
-		self.title      = title 
-		self.meta       = meta 
-		self.html 		= text_html
-		self.toc        = toc 
+		self.title = title 
+		self.meta  = meta 
+		self.html  = text_html
+		self.toc   = toc 
 
 	def _fileData(self, path):
-		""" File data = title, meta, toc, html, output path"""
+		""" Main method: gets file path property, calls read() & mdParse()"""
 
 		self.outputPath = path_output(path)
 
@@ -132,24 +191,26 @@ class Parsing(object):
 		self.mdParse(text)
 		
 	def _metaParse(self, dic):
-		"""Take meta dict and convert it to HTML """
+		"""Take meta dict and converts it to HTML. Returns title and HTML """
 
 		metaHTML = "" 
 		title    = ""
 		
-		# pasamos metadata (importante) a html 
-		for a in needed_meta:
-			if a[0] in dic:
-				if a[0] == "title":
-					title = dic[a[0]][0]
+		# important metadata to HTML 
+		for meta in NEEDED_META:
+			if meta[0] in dic:
+				if meta[0] == "title":
+					title = dic[meta[0]][0]
 
-				metaHTML += '<' + a[1] + ' class="' + a[0] + '">' + dic[a[0]][0] + '</' + a[1] + '>\n'
+				metaHTML += '<' + meta[1] + ' class="' + meta[0] + '">' + \
+							dic[meta[0]][0] + '</' + meta[1] + '>\n'
 				
-				del dic[a[0]]
+				del dic[meta[0]]
 		
-		# ahora vemos si quedaron otras cosas, si es asi, pasamos a def list 
+		# if there are remainders, turn them into definition list 
 		if dic:
 			metaHTML = metaHTML + '<dl>\n'
+
 			for item in dic:
 				metaHTML += '\t<dt>' + item + '</dt>\n\t<dd>' + dic[item][0] + '</dd>\n'
 
@@ -158,156 +219,184 @@ class Parsing(object):
 		return title, metaHTML
 
 	def save(self):
+		""" Saves file using it properties"""
 
 		# create output tree folders if doesnt exist
 		path_mkdir(path_get(self.outputPath))
 
-		if pyVer == 3:
-			cmd = open(self.outputPath, 'w',encoding="utf-8-sig")
-		else:
-			cmd = codecs.open(self.outputPath, "w", encoding="utf-8-sig")
+		cmd = cmd_open_write(self.outputPath, 'w')
 
 		with cmd as outputFile:
 			outputFile.write(self.html)
 
-	def finalText(self, header, navigation=""):
-
-		title = ""
-		meta  = ""
-		body  = ""
-
-		if header.html or header.title:
-			title = header.title + " | " + self.title
-			meta = navigation + header.html + "\n\r<article>" + self.meta
-			body = self.html + "</article>\n\r"+navigation
-		else:
-			title = self.title
-			meta = "\n\r<header>" + navigation + self.meta + "</header>\n\r"
-			body = "\n\r<article>" + self.html + "</article>\n\r"+navigation
-
-		return html_complete(title, meta, body)
 
 class InputExist(argparse.Action):
+	""" Custom action for args, check if input exists """
+
 	def __call__(self, parser, namespace, values, option_string=None):
 		if not os.path.exists(values):
 			parser.error('Source file or folder doesn\'t exist')
+
 		setattr(namespace, self.dest, values)
 
-class OptionsBelong(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        if option_string == "--toc" and namespace.merge is False:
-        	parser.error('--toc belongs to --merge')
-        
-        if option_string in ["--index", "--nav"] and namespace.book is False:
-        	parser.error(option_string + ' belongs to --book')
 
-        if option_string == "--nav" or option_string == "-n":
-        	values = True
-        setattr(namespace, self.dest, values)
+class OptionsBelong(argparse.Action):
+	""" Custom action for args, check 'belonging' of options """
+
+	def __call__(self, parser, namespace, values, option_string=None):
+
+		if option_string == "--toc" and namespace.merge is False:
+			parser.error('--toc belongs to --merge')
+
+		if option_string in ["--index", "--nav"] and namespace.book is False:
+			parser.error(option_string + ' belongs to --book')
+
+		if option_string == "--nav" or option_string == "-n":
+			values = True
+
+		setattr(namespace, self.dest, values)
 
 # ---------------------
 # Methods 
 # ---------------------
 
 def args():
+	""" Arguments definition. Returns values as dict """
+
 	# to allow --merge to be merge and still being optional
-	subcat_args=('merge','book')
-	arguments=['--'+arg if arg in subcat_args else arg for arg in sys.argv[1:]]
+	subcat_args = ('merge','book')
+	arguments   = ['--' + arg if arg in subcat_args else arg for arg in sys.argv[1:]]
 
 	# definitions:
-	parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, add_help=False, usage=my_usage, description=my_description, epilog=my_epilog)
+	parser = argparse.ArgumentParser(
+							formatter_class=argparse.RawTextHelpFormatter, 
+							add_help=False, usage=MY_USAGE, 
+							description=MY_DESCRIPTION, epilog=MY_EPILOG
+							)
 
 	group_required = parser.add_argument_group(' Required')
 
 	group_required.add_argument("source"
-								, help="File, folder or a .list which holds the path+files (in order) to parse (mainly used with merge or book)"
-								, action=InputExist)
+						, help="File, folder or .list (mainly used with merge or book)"
+						, action=InputExist)
 
 	group_options = parser.add_argument_group(' Options')
 	
 	group_options.add_argument("--output", "-o" 
-								, help="Output folder to save processed files"
-								, metavar='FOLDER')
+						, help="Output folder to save processed files"
+						, metavar='FOLDER')
 	group_options.add_argument("--flat"
-								, help="Saves all the files in a single directory depth (not using source dir tree)"
-								, action="store_true")
+						, help="Save files in a single directory depth"
+						, action="store_true")
 	group_options.add_argument("--header"
-								, help="Header file, mainly for merged files. Might contain main title, date and toc (as [TOC_HERE]) placement."
-								, metavar='FILE')
+						, help="Header file, mainly for merged. Could contain title, date and toc (as [TOC_HERE])."
+						, metavar='FILE')
 	group_options.add_argument("--extensions"
-								, help="List of other installed extensions"
-								, nargs='*', metavar='ext')
+						, help="List of other installed extensions"
+						, nargs='*', metavar='ext')
 
 	exclusive_css = group_options.add_mutually_exclusive_group()
 	exclusive_css.add_argument("--css"
-								, help="Custom css with path (as included in href). Default: embeded"
-								, metavar='FILE')
+						, help="Custom css with path (as included in href). Default: embeded"
+						, metavar='FILE')
 	exclusive_css.add_argument("--serif"
-								, help="In embeded css, choose between sans (false) or serif (true). Default: sans"
-								, action='store_true')	
+						, help="(embeded CSS) pick sans (false) or serif (true). Default: %(default)s"
+						, action='store_true')	
 
 	group_special = parser.add_argument_group(' Specific')
 
 	exclusive_style = group_special.add_mutually_exclusive_group()
 	exclusive_style.add_argument("--merge"
-								, help="Merge files into one."
-								, action="store_true")
-	group_special.add_argument  ("--toc"
-								, help="Toc max depth (for [TOC_HERE]). Default: %(default)s (all)"
-								, choices=[0, 1, 2, 3, 4, 5] , default=0 , type=int, action=OptionsBelong)
+						, help="Merge files into one."
+						, action="store_true")
+	group_special.add_argument  ("--toc", choices = [0, 1, 2, 3, 4, 5] 
+						, help="Toc max depth (for [TOC_HERE]). Default: %(default)s (all)"
+						, default=0 , type=int, action=OptionsBelong)
 	exclusive_style.add_argument("--book"
-								, help="Create a notebook with navigation (next, prev) between files and an index"
-								, action="store_true")
+						, help="Create a book with navigation (next/prev) between files and an index"
+						, action="store_true")
 	group_special.add_argument  ("--index"
-								, help="Custom index for book"
-								, action=OptionsBelong , metavar='FILE')
+						, help="Custom index for book"
+						, action=OptionsBelong , metavar='FILE')
 	group_special.add_argument  ("--nav", "-n"
-								, help='Use file titles as the navigation links instead of "prev/next"'
-								, default=False , nargs=0 , action=OptionsBelong )
+						, help='Use file titles as the navigation links instead of "prev/next"'
+						, default=False, nargs=0, action=OptionsBelong)
 
 	group_other = parser.add_argument_group(' Last but not least')
-	group_other.add_argument("--help", "-h", help="show this help message and exit", action="help") 
+	group_other.add_argument("--help", "-h", 
+						help="show this help message and exit", action="help") 
 
 	return vars(parser.parse_args(arguments))
 
-# find substring in list and return it's index +1
+
 def index_containing_substring(the_list, substring):
-    for i, s in enumerate(the_list):
-        if substring in s:
-              return i + 1 # if it's in the first, add 1 so doesn't go to false
-    return False
+	""" find substring in list and return it's index +1"""
 
-def path_find(file):
+	for i, string in enumerate(the_list):
+		if substring in string:
+			return i + 1 # add 1 if it's in the first so doesn't go to false
 
-	return os.path.abspath(file)
+	return False
 
-def path_relative(file_path):
-	if not settings['flat']:
-		return path_delExtension(file_path)[len(sourcePath)+2:]+".html" #remove a letter and \
 
-	return file_path[len(folderOutput):]
+def cmd_open_write(path, mode):
+	""" Create the open/write command according to python version 
+	mode is: 'r' for read and 'w' for write
+	"""
+
+	if PY_VER == 3:
+		return open(path, mode, encoding='utf-8-sig')
+	else:
+		return codecs.open(path, mode, encoding='utf-8-sig')
+
+
+def path_find(file_path):
+	""" Find path of file """
+
+	return os.path.abspath(file_path)
+
+
+def path_relative_to(this_path, root=None, index=False):
+	"""Gets the relative path of this file from another path
+	root default is ouput folder 
+	"""
+
+	if root is None:
+		root = CONFIG['output']
+	
+	if index:
+		return os.path.relpath(this_path, root)
+		
+	# Delete first "folder" (..\)
+	return os.path.relpath(this_path, root)[3:]
+
 
 def path_output(filepath):
-	if folderOutput:
-		if not settings['flat']:
-			if filepath == sourcePath:
-				newPath = os.path.join(folderOutput,path_delExtension(path_getFilename(filepath))+".html")
-			else:
-				newPath = os.path.join(folderOutput,path_delExtension(filepath)[len(sourcePath)+1:]+".html") 
-		else:
-			newPath = os.path.join(folderOutput,path_delExtension(path_getFilename(filepath))+".html")
-
-		return newPath
+	""" Creates the output path """
 	
-	return path_delExtension(filepath) + ".html"
+	path_out = CONFIG['output']
 
-def path_delExtension(file):
+	if not path_out:
+		newPath = path_delExtension(filepath)
+	else:
+		if CONFIG['flat'] or (not CONFIG['flat'] and filepath == CONFIG['source']):
+			newPath = os.path.join(path_out, path_delExtension(path_getFilename(filepath)))
+		else:
+			# remove first \
+			newPath = os.path.join(path_out, path_delExtension(filepath)[len(CONFIG['source']) + 1:])
 
-	path, ext = os.path.splitext(file)
+	return newPath + ".html"
+	
+
+def path_delExtension(file_path):
+	""" Delete the extension from path """
+
+	path, _ = os.path.splitext(file_path)
 	return path
 
+
 def path_mkdir(path):
-	""" make dirs according to tree in path """
+	""" make tree dirs from path """
 
 	try:
 		os.makedirs(path)
@@ -315,54 +404,66 @@ def path_mkdir(path):
 		if exc.errno != errno.EEXIST:
 			raise 
 
-def path_get(file):
 
-	return os.path.dirname(file)
+def path_get(thefile):
+	""" Get path from file """
 
-def path_getFilename(file):
+	return os.path.dirname(thefile)
 
-	return os.path.basename(file)
+
+def path_getFilename(file_path):
+	""" Get filename from path"""
+
+	return os.path.basename(file_path)
+
 
 def path_lastDir(path):
+	""" Get last dir from path """
 
 	return os.path.split(path)[1]
 
+
 def files_get (elements):
+	""" Get a list of files in dir. Returns list """ 
+
 	theFiles = list()
 
 	if os.path.isfile(elements):
-		if elements.endswith(extensions_accepted):
+		if os.path.exists(elements) and elements.endswith(EXTENSIONS_ACCEPTED):
 			theFiles.append(elements)
 	else:
 		for root, subFolders, files in os.walk(elements):
 			for filename in files:
 				filePath = os.path.join(root, filename)
 
-				if os.path.exists(filePath) and filePath.endswith(extensions_accepted):
+				if os.path.exists(filePath) and filePath.endswith(EXTENSIONS_ACCEPTED):
 					theFiles.append(filePath)
 
 	return theFiles	
 
+
 def files_list(path):
+	"""Gets the files from the .list (returns list). If not a .list, calls files_get()"""
+	global CONFIG
+
 	if path.endswith(".list"):
+		CONFIG['flat'] = True
 		fileList = list()
-		settings['flat'] = True
-		
-		if pyVer == 3:
-			cmd = open(path,"r", encoding='utf-8-sig')
-		else:
-			cmd = codecs.open(path,"r", encoding='utf-8-sig')
-		
+		cmd      = cmd_open_write(path, 'r')
+			
 		with cmd as listFiles:
 			for line in listFiles:
 				line = line.strip()
-				if line.endswith(extensions_accepted) and os.path.exists(line):
+
+				if line.endswith(EXTENSIONS_ACCEPTED) and os.path.exists(line):
 					fileList.append(line)
 		return fileList
 	
 	return files_get(path)
 
+
 def html_cssDefault():
+	""" Default css in a big string """
 
 	returnMe = """
 	* 			{ margin: 0; padding: 0; }
@@ -372,10 +473,10 @@ def html_cssDefault():
 		padding: 10px 25px; max-width: 700px; margin: 5px auto; 
 	"""
 
-	if settings['serif']:
-		returnMe += "	font: normal 14px 'Droid Serif', Georgia, serif;"
+	if CONFIG['serif']:
+		returnMe += "	font: 14px 'Droid Serif', Georgia, serif;"
 	else:
-		returnMe += "	font: 14px helvetica,arial,freesans,clean,sans-serif;"
+		returnMe += "	font: 14px helvetica, arial, freesans, sans-serif;"
 
 	returnMe += """
 	    line-height: 1.6em;
@@ -611,104 +712,159 @@ def html_cssDefault():
 	
 	return returnMe
 
+
 def html_missing (title):
-	"""Complete the missing HTML, including CSS """
+	"""Complete missing HTML, including CSS. Returns two strings: begining & ending"""
 
-	begining = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>'+title+'</title>\n'
+	begining = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>' \
+				+ title + '</title>\n'
 
-	if not settings['css']:
+	if not CONFIG['css']:
 		begining += "<style>" + html_cssDefault() + "</style>"
+
 	else: 
-		begining += '<link rel="stylesheet" href="'+settings['css']+' type="text/css">'
+		begining += '<link rel="stylesheet" href="' + CONFIG['css'] + ' type="text/css">'
 
 	begining += '\n</head>\n<body>\n'
-
-	ending='</body>\n</html>'
+	ending   = '</body>\n</html>'
 	
 	return begining, ending
 
-def html_complete(title, meta, text):
-	""" reformat the text to valid html page """
 
-	document = ""
+def html_complete(title, meta, text):
+	""" reformat the text to valid HTML page """
 
 	tagsBeg, tagsEnd = html_missing(title)
 	document = tagsBeg + meta + text + tagsEnd
 
 	return document
 
-def html_bookNavigation(prev, ptitle, next, ntitle):
-	navPre = ""
+
+def html_bookNavigation(current_path, prev_path, prev_title, next_path, next_title):
+	""" Makes the navigation links """
+
+	navPre  = ""
 	navNext = ""
 
-	if prev:
-		prev = path_relative(prev)
-		if settings['nav']:
-			navPre = '<a href="'+prev+'">&lt; '+ptitle+'</a>'
+	if prev_path:
+		prev_path = path_relative_to(prev_path, current_path)
+		
+		if CONFIG['nav']:
+			navPre = '<a href="' + prev_path + '">&lt; '+ prev_title + '</a>'
 		else:
-			navPre = '<a href="'+prev+'">&lt; prev</a>'
+			navPre = '<a href="' + prev_path + '">&lt; prev</a>'
 
-	if next:
-		next = path_relative(next)
-		if settings['nav']:
-			navNext = '<a href="'+next+'">'+ntitle+' &gt;</a>'
-		else:
-			navNext = '<a href="'+next+'">next &gt;</a>'
+	if next_path:
+		next_path = path_relative_to(next_path, current_path)
 
-	return '<div class="nav">'+navPre+' <a href="index.html">index</a> '+navNext+'</div>'
+		if CONFIG['nav']:
+			navNext = '<a href="' + next_path + '">' + next_title + ' &gt;</a>'
+		else: 
+			navNext = '<a href="' + next_path + '">next &gt;</a>'
+
+	index_url = path_relative_to(os.path.join(CONFIG['output'],'index.html'), current_path)
+
+	return '<div class="nav">' + navPre + ' <a href="'+index_url+'">index</a> '\
+			 + navNext + '</div>'
+
+
+def html_finalText(file_data, header_data, navigation=""):
+	""" Gathers data and returns the final HTML """
+
+	title = ""
+	meta  = ""
+	body  = ""
+
+	if header_data.html or header_data.title:
+		title = header_data.title + " | " + file_data.title
+		meta  = navigation + header_data.html + "\n\r<article>" + file_data.meta
+		body  = file_data.html + "</article>\n\r" + navigation
+	else:
+		title = file_data.title
+		meta  = "\n\r<header>" + navigation + file_data.meta + "</header>\n\r"
+		body  = "\n\r<article>" + file_data.html + "</article>\n\r" + navigation
+
+	return html_complete(title, meta, body)
+
 
 # ---------------------
 # Methods: Parsing
 # ---------------------
 
-def pagesSpecial(filelist):
-	global headerFile, indexFile
+def pagesSpecial(filelist, path_header="", path_index=""):
+	""" Finds header & index files, and deletes them from file list
+	Returns the modified file list, new header path, new index path
+	"""
 
 	# existance of header or index in files
-	headerList = index_containing_substring(filelist, headerFilename+".")
-	indexList  = index_containing_substring(filelist, indexFilename+".")
+	headerList = index_containing_substring(filelist, HEADER_FILENAME + ".")
+	indexList  = index_containing_substring(filelist, INDEX_FILENAME + ".")
 
-	if headerFile or headerList:
-		if headerList and not headerFile:
-			headerFile = filelist[headerList -1]
+	if path_header or headerList:
+		if headerList and not path_header:
+			path_header = filelist[headerList -1]
 
-		headerFile = path_find(headerFile)
+		path_header = path_find(path_header)
 
-		if headerFile in filelist:
-			filelist.remove(headerFile)
+		if path_header in filelist:
+			filelist.remove(path_header)
 
-	if indexFile or indexList:
-		if indexList and not indexFile:
+	if path_index or indexList:
+		if indexList and not path_index:
 			indexList = filelist[indexList -1]
 
-		indexFile = path_find(indexFile)
+		path_index = path_find(path_index)
 
-		if indexFile in filelist:
-			filelist.remove(indexFile)
+		if path_index in filelist:
+			filelist.remove(path_index)
 
-	return filelist
+	return filelist, path_header, path_index
+
+def headerCreation(header_file=""):
+	"""Checks and creates/prepare the header"""
+
+	if header_file and os.path.exists(header_file):
+		header = Parsing(header_file)
+
+		if header.meta:
+			header.meta = "\n\r<header>" + header.meta + "</header>\n\r"
+
+		if header.meta or header.html: 
+			header.html = '\n\r<section id="head">' + header.meta + \
+							header.html + "</section>\n\r"
+	else:
+		header = Parsing("")
+
+	return header 
+
 
 def findH1(text):
+	""" Finds the title (h1) in the HTML and returns it. If not: return None """
 
-	if text.find("<h1 ")>-1: # because of extensions
-		title = text[text.find("<h1 ")+4:text.find("</h1>")]
+	if text.find("<h1 ") >- 1: # because of extensions
+		title = text[text.find("<h1 ") + 4:text.find("</h1>")]
 		title = title.split(">")[1] # dirty fix
 
 		return title
 
 	return None
 
-def futureTitle(file):
+
+def futureTitle(file_path):
+	"""Gets the h1 in a file. It opens, converts and finds title """
+
 	tmp = Parsing("")
 
-	text = tmp.read(file)
+	text = tmp.read(file_path)
 	tmp.mdParse(text)
 
 	return findH1(tmp.html)
 
-def tocMerge(tocs):
-	"""Merge multiple TOCs (HTML) into one """
 
+def tocMerge(tocs):
+	"""Merge multiple TOCs (HTML) into one. Does filtering """
+
+	tocDepth = CONFIG['toc']
 	tocFinal = tocs.replace('\n</ul>\n</div>', "")
 
 	if tocDepth == 0:
@@ -716,13 +872,13 @@ def tocMerge(tocs):
 		
 		# remove blank lines
 		tocFinal = os.linesep.join([s for s in tocFinal.splitlines() if s])
-	else:
-		allTocs = tocFinal.split('<div class="toc">\n<ul>')[1:] # remove first as it's blank
 
+	else:
+		allTocs     = tocFinal.split('<div class="toc">\n<ul>')[1:] # remove first as it's blank
 		tocBuilding = ""
 
 		for toc in allTocs:
-			toc = toc.replace('<ul>','\n<ul>')
+			toc = toc.replace('<ul>', '\n<ul>')
 			tocSplitted = toc.split("\n")[1:]
 
 			if tocDepth == 1:
@@ -747,51 +903,68 @@ def tocMerge(tocs):
 					if doPrint:
 						tocBuilding += item
 
+
 		tocFinal = tocBuilding
 
-	return '<div class="toc"><ul>'+tocFinal+'</ul></div>' 
+	return '<div class="toc"><ul>' + tocFinal + '</ul></div>' 
+
 
 def wikiLinks(text):
-	"""
-	Process "wiki" links: [](file.md) to [file title](newpath.html).
-	It must be a markdown file, opened before
+	""" Process "wiki" links: [](file|file.md) to [file title](newpath.html).
+	It must be a markdown file, opened before (string)
 	"""
 
 	textNew = list()
 	
-	for index, line in enumerate(text):
-		if line.find("[](") > -1: # some bug going on...
-			linkedFileName = line[line.find("[](")+3:line.find(")")]
+	for line in text:
+		if "](file|" in line:
+			if line.find("[](file|") > -1: 
+				linkedFileName = line[line.find("[](file|") + 8 : line.find(")")]
 
-			if os.path.exists(linkedFileName):
-				title = futureTitle(linkedFileName)
-				if title: 
-					line = line.replace("[](","["+title+"](")
+				if os.path.exists(linkedFileName):
+					title = futureTitle(linkedFileName)
+					if title: 
+						line = line.replace("[](file|", "[" + title + "](")
+				else:
+					line = line.replace("[](file|", "[" + linkedFileName + "](")
+
+
 			else:
-				line = line.replace("[](","["+linkedFileName+"](")
+				# has custom title. Delete file| and find output path
+				linkedFileName = line[line.find("](file|") + 7 : line.find(")")]
+				line = line.replace("](file|", "](")
 
+			# finds the output link and replaces
 			outputPath = path_getFilename(path_output(linkedFileName))
+			line       = line.replace(linkedFileName, outputPath)
+				
 
-			line = line.replace(linkedFileName,outputPath)
-		textNew.append(line)
+
+			textNew.append(line)
 
 	return textNew
 
-def makeFiles(theSettings,theHeader):
-	projectWhole = ""
-	projectTocs = ""
-	
-	for file in theSettings['listfiles']:
-		file_current = Parsing(file)
 
-		if not theSettings['merge']:
-			file_current.html = file_current.finalText(theHeader)
+def makeFiles(theHeader):
+	""" Process files in folder, alone, or .list. No book option """
+
+	doMerge = CONFIG['merge']
+
+	projectWhole = ""
+	projectTocs  = ""
+	
+	for this_file in CONFIG['fileslist']:
+		file_current = Parsing(this_file)
+
+		if not doMerge:
+			file_current.html = html_finalText(file_current, theHeader)
 			file_current.save()
 		else:
-			projectTocs += file_current.toc
-			projectWhole += '\r\n <article>' + file_current.meta + file_current.html + "</article>\n\r"
+			projectTocs  += file_current.toc
+			projectWhole += '\r\n <article>' + file_current.meta + \
+							file_current.html + "</article>\n\r"
 
-	if theSettings['merge']:
+	if doMerge:
 		outputName = path_lastDir(path_get(file_current.outputPath)) + ".html"
 
 		# "reset" file_current
@@ -799,47 +972,59 @@ def makeFiles(theSettings,theHeader):
 		file_current.outputPath = ""
 
 		projectTocs = tocMerge(projectTocs)
-		header = theHeader.html.replace('[TOC_HERE]', projectTocs)
+		header_text = theHeader.html.replace('[TOC_HERE]', projectTocs)
 
-		file_current.html       = html_complete(theHeader.title, header, projectWhole)
-		file_current.outputPath = theSettings['output'] + '\\'+ outputName if theSettings['output'] else os.getcwd() + '\\'+ outputName
+		file_current.html = html_complete(theHeader.title, header_text, projectWhole)
+
+		path_dir = CONFIG['output'] if CONFIG['output'] else os.getcwd()
+		file_current.outputPath = path_dir + '\\'+ outputName
 
 		file_current.save()
 
-def makeBook(theSettings,theHeader):
+
+def makeBook(theHeader):
+	""" Process files if indicated to be in a book """
+
+	list_files = CONFIG['fileslist']
+
 	bookIndex  = "<ul>"
-	filesTotal = len(theSettings['listfiles'])
+	filesTotal = len(list_files)
 
 	i = 0 
-	while i<filesTotal:
+	while i < filesTotal:
 
 		if i == 0:
 			data_prev = Parsing("")
 
-		data_current = Parsing(theSettings['listfiles'][i])
+		data_current = Parsing(list_files[i])
 		
 		if i+1 < filesTotal:
-			data_next = Parsing(theSettings['listfiles'][i+1])
+			data_next = Parsing(list_files[i+1])
 		else:
 			data_next = Parsing("")
 
-		current_absPath = path_relative(data_current.outputPath)
-		bookIndex += '<li><a href="'+current_absPath+'">'+data_current.title+'</a></li>'
+		current_relative = path_relative_to(data_current.outputPath, None, True)
+		bookIndex += '<li><a href="' + current_relative + '">' + \
+						data_current.title + '</a></li>'
 
-		navigation = html_bookNavigation(data_prev.outputPath, data_prev.title, data_next.outputPath, data_next.title)
+		navigation = html_bookNavigation(data_current.outputPath, data_prev.outputPath, data_prev.title, 
+										data_next.outputPath, data_next.title)
 
-		data_current.html = data_current.finalText(theHeader,navigation)
+		data_current.html = html_finalText(data_current, theHeader, navigation)
 		data_current.save()
 
 		data_prev    = data_current
 		data_current = data_next
 		data_next    = Parsing("")
 
-		i+=1
+		i += 1
 
-	# make index
+	index = ""
+	# Process the indicated file
 	if indexFile and os.path.exists(indexFile):
-		index = Parsing(index,True)
+
+		index = Parsing(indexFile, True)
+		index.outputPath = os.path.join(CONFIG['output'],'index.html')
 
 		parsedIndex = index.read(indexFile)
 		parsedIndex = parsedIndex.split("\n")
@@ -853,16 +1038,19 @@ def makeBook(theSettings,theHeader):
 		if index.title == index.outputPath:
 			index.title = "Index"
 
-		index.outputPath = path_output("index.html")
-		index.html = html_complete("Index", "", 	index.html)
+		index.html = html_complete("Index", "", index.html)
+
 		index.save()
 
+	# Or create one
 	else:
 		index = Parsing("")
 
 		index.title      = theHeader.title if theHeader.title else "Index"
-		index.html       = html_complete(index.title, "", bookIndex+"</ul>")
-		index.outputPath = theSettings['output']+'\\index.html' if theSettings['output'] else os.getcwd()+'\\index.html'
+		index.html       = html_complete(index.title, "", bookIndex + "</ul>")
+
+		path_dir = CONFIG['output'] if CONFIG['output'] else os.getcwd()
+		index.outputPath = path_dir + '\\index.html'
 
 		index.save()
  
@@ -870,39 +1058,31 @@ def makeBook(theSettings,theHeader):
 # The program
 # -------------------
 
-settings = args()
+if __name__ == '__main__':
+	settings = args()
 
-sourcePath   = settings['source']
-headerFile   = settings['header']
-folderOutput = settings['output']
-tocDepth     = settings['toc']
-indexFile    = settings['index']
+	for key, val in settings.items():
+		CONFIG[key] = val
 
-if settings['extensions']:
-	selected_ext = selected_ext + settings['extensions']
+	if CONFIG['extensions']:
+		SELECTED_EXTENSIONS = SELECTED_EXTENSIONS + CONFIG['extensions']
 
-settings['listfiles'] = files_list(settings['source'])
-settings['listfiles'] = pagesSpecial(settings['listfiles'])
+	CONFIG['fileslist'] = files_list(CONFIG['source'])
+	CONFIG['fileslist'], headerFile, indexFile = pagesSpecial(CONFIG['fileslist'], 
+											CONFIG['header'], 
+											CONFIG['index'])
 
-# do the magic
-if headerFile and os.path.exists(headerFile):
-	header = Parsing(headerFile)
+	# do the magic
+	header = headerCreation(headerFile)
 
-	if header.meta:
-		header.meta = "\n\r<header>" + header.meta + "</header>\n\r"
+	if CONFIG['book']:
+		if len(CONFIG['fileslist']) < 2:
+			print ("sorry, you can't")
+			sys.exit()
 
-	if header.meta or header.html: 
-		header.html = '\n\r<section id="head">' + header.meta + header.html + "</section>\n\r"
-else:
-	header = Parsing("")
+		makeBook(header)
+	else:
+		makeFiles(header)
 
-if settings['book']:
-	if len(settings['listfiles']) < 2:
-		print ("sorry, you can't")
-		sys.exit()
+	print ("\n    done")
 
-	makeBook(settings,header)
-else:
-	makeFiles(settings,header)
-
-print ("\n    done")
