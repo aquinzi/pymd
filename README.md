@@ -36,7 +36,7 @@ Process files in .list, merge them:
 
 	pymd.py nice.list merge -o /output --header im_a_header.md
 	
-More examples and explanation (with images, yay!) in this [blog post](http://www.intentodeblog.com.ar/posts/pymd/en.html)
+More examples and explanation (with images, yay!) in this [blog post](http://blog.aquinzi.com/pymd/)
 
 Features
 -----------
